@@ -8,7 +8,9 @@ Parameters:
     Type: String
     Default: "sam-s3input-sample-v123456789"
     Description: Enter Read bucket name Default is t2.micro!?
-
+  BucketNameWrite:
+    Type: String
+    Default: "sam-s3output-sample-v999999999"
 
 Globals:
   Function:
@@ -26,9 +28,19 @@ Resources:
         BlockPublicPolicy: True
         IgnorePublicAcls: True
         RestrictPublicBuckets: True
+  S3OutputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketNameWrite
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
   # Lambda
   HelloWorldFunction:
     Type: AWS::Serverless::Function
+#ロールを自動で作成するために、└─$ sam deploy --guided --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND　で実行する
     Properties:
       PackageType: Image
 #      CodeUri: hello_world/
@@ -44,20 +56,22 @@ Resources:
           Properties:
             Bucket: !Ref S3InputBucket
             Events: s3:ObjectCreated:*
-#ロールを自動で作成するために、└─$ sam deploy --guided --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND　で実行する
+      Policies: # 書き込み権限の付与
+        S3CrudPolicy:
+          BucketName: !Ref S3OutputBucket
     Metadata:
       Dockerfile: Dockerfile
       DockerContext: ./hello_world
       DockerTag: python3.9-v1
   #Layerの作成
-  MyLayer:
-    Type: AWS::Serverless::LayerVersion
-    Properties:
-      ContentUri: 'mylayer/'
-      CompatibleRuntimes:
-        - python3.9
-    Metadata:
-      BuildMethod: python3.9
+#  MyLayer:
+#    Type: AWS::Serverless::LayerVersion
+#    Properties:
+#      ContentUri: 'mylayer/'
+#      CompatibleRuntimes:
+#        - python3.9
+#    Metadata:
+#      BuildMethod: python3.9
 Outputs:
   S3InputBucketArn:
     Description: "Hello World S3 ARN"
