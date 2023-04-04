@@ -7,6 +7,7 @@ sam deploy --guided --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND
 ### Check output resource
 ```sh
 aws s3 ls
+aws sqs list-queues
 aws lambda list-functions
 aws iam list-roles|grep -i rolename
 aws ecr describe-repositories | grep -i repositoryName
