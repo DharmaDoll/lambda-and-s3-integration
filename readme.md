@@ -1,3 +1,6 @@
+## Lambda integration sample 
+![mmmm](img/img.svg)
+
 ### Build and deploy
 ```sh
 sam build -u
