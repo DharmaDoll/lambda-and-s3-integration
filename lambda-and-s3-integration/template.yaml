@@ -6,14 +6,17 @@ Description: >
 Parameters:
   BucketName:
     Type: String
-    Default: "sam-s3input-sample-v123456789"
+    Default: "sam-sample-s3input-v123456789"
     Description: Enter Read bucket name Default is t2.micro!?
   BucketNameWrite:
     Type: String
-    Default: "sam-s3output-sample-v999999999"
+    Default: "sam-sample-s3output-v999999999"
   QueueNameOut:
     Type: String
-    Default: 'sam-queueOut-sample'
+    Default: 'sam-sample-queueOut'
+  MailTableName:
+    Type: String
+    Default: 'sam-sample-mailaddress'
 
 Globals:
   Function:
@@ -21,7 +24,10 @@ Globals:
     MemorySize: 128 # package typeがimageの場合必須ぽい？
 
 Resources:
-  #SQS
+  #SNS topic
+  SnsBounceTopic:
+    Type: AWS::SNS::Topic
+  #SQS Que
   SqsOutput:
     Type: AWS::SQS::Queue
     Properties:
@@ -38,7 +44,7 @@ Resources:
           - Sid: 1
             Effect: Allow
             Principal: 
-              AWS: !GetAtt HelloWorldFunctionRole.Arn
+              AWS: !GetAtt SendQueueFunctionRole.Arn
             Action:
               - sqs:*
             Resource: "*"
@@ -52,20 +58,41 @@ Resources:
         BlockPublicPolicy: True
         IgnorePublicAcls: True
         RestrictPublicBuckets: True
-  S3OutputBucket:
-    Type: AWS::S3::Bucket
+  #Dynamo DB Table
+  DynamoDbMailTable:
+    Type: AWS::DynamoDB::Table
+#    DeletionPolicy: Retain
     Properties:
-      BucketName: !Ref BucketNameWrite
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: True
-        BlockPublicPolicy: True
-        IgnorePublicAcls: True
-        RestrictPublicBuckets: True
+      TableName: !Ref MailTableName
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+        - AttributeName: haserror
+          AttributeType: N
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 3
+        WriteCapacityUnits: 3
+      GlobalSecondaryIndexes:
+        - IndexName: haserror-index
+          KeySchema:
+            - AttributeName: haserror
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput:
+            ReadCapacityUnits: 3
+            WriteCapacityUnits: 3
+        
+
   # Lambda
-  HelloWorldFunction:
+  SendQueueFunction:
     Type: AWS::Serverless::Function
 #ロールを自動で作成するために、└─$ sam deploy --guided --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND　で実行する
     Properties:
+      CodeUri: send_queue/
       PackageType: Image
 #      CodeUri: hello_world/
 #      Handler: app.lambda_handler
@@ -80,12 +107,57 @@ Resources:
           Properties:
             Bucket: !Ref S3InputBucket
             Events: s3:ObjectCreated:*
-      Policies: # 書き込み権限の付与(inline)
-        S3CrudPolicy:
-          BucketName: !Ref S3OutputBucket
+      Policies: # 書き込み権限の付与(おもにinline)
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MailTableName
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt SqsOutput.QueueName
     Metadata:
       Dockerfile: Dockerfile
-      DockerContext: ./hello_world
+      DockerContext: ./send_queue
+      DockerTag: python3.9-v1
+  SendMailFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: send_mail/
+      PackageType: Image
+      Architectures:
+        - x86_64
+      Events:
+        SendMailEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt SqsOutput.Arn
+            BatchSize: 10
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MailTableName
+        - S3ReadPolicy:
+            BucketName: !Ref S3InputBucket
+        - SESCrudPolicy:
+            IdentityName: 'aa@example.com'
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ./send_mail
+      DockerTag: python3.9-v1
+  BounceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: bounce/
+      PackageType: Image
+      Architectures:
+        - x86_64
+      Events:
+        BounceMailEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref SnsBounceTopic
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DynamoDbMailTable
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ./bounce
       DockerTag: python3.9-v1
   #Layerの作成 コンテナイメージの場合必要なさそう？
 #  MyLayer:
@@ -97,17 +169,26 @@ Resources:
 #    Metadata:
 #      BuildMethod: python3.9
 Outputs:
+  SendQueueFunction:
+    Description: "Send Que Lambda Function ARN"
+    Value: !GetAtt SendQueueFunction.Arn
+  SendQueueFunctionRoleArn:
+    Description: "Implicit IAM Role created for Hello World function"
+    Value: !GetAtt SendQueueFunctionRole.Arn
+  BounceFunctionArn:
+    Value: !GetAtt BounceFunction.Arn
+  BounceFunctionRoleArn:
+    Value: !GetAtt BounceFunctionRole.Arn 
+  SendMailFunctionArn:
+    Value: !GetAtt SendMailFunction.Arn
+  SendMailFunctionRoleArn:
+    Value: !GetAtt SendMailFunctionRole.Arn
   S3InputBucketArn:
     Description: "Hello World S3 ARN"
     Value: !GetAtt S3InputBucket.Arn
-  HelloWorldFunction:
-    Description: "Hello World Lambda Function ARN"
-    Value: !GetAtt HelloWorldFunction.Arn
-  HelloWorldFunctionIamRole:
-    Description: "Implicit IAM Role created for Hello World function"
-    Value: !GetAtt HelloWorldFunctionRole.Arn
   SqsOutputArn:
     Value: !GetAtt SqsOutput.Arn
-
-
-#To do  SNS topic連携
+  SnsBounceTopicArn:
+    Value: !Ref SnsBounceTopic
+  DynamoDbMailTableName:
+    Value: !Ref DynamoDbMailTable
